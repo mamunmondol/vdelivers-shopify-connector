@@ -13,6 +13,7 @@ const state = {
   loading: false,
   syncBusy: false,
   showModal: false,
+  showVDelivers: false,
   alert: null,          // { type: 'success'|'error', msg }
 };
 
@@ -154,6 +155,16 @@ async function doSync() {
   renderMainContent();
 }
 
+async function doSaveVDelivers(url, key) {
+  await api('PUT', `/api/shops/${state.shop.id}/vdelivers`, { vdelivers_api_url: url, vdelivers_api_key: key });
+  await loadShops();
+  state.shop = state.shops.find((s) => s.id === state.shop.id) || state.shop;
+  state.showVDelivers = false;
+  renderSidebar();
+  renderMainContent();
+  flash('success', 'vDelivers credentials saved');
+}
+
 async function doDisconnect() {
   if (!state.shop) return;
   if (!confirm(`Disconnect ${state.shop.shop_domain}?\n\nThis clears the access token and stops all syncs.`)) return;
@@ -177,6 +188,7 @@ function doConnect(rawDomain) {
 }
 
 function checkConnectedParam() {
+  // kept for backwards compat — OAuth now redirects to /setup instead
   const params = new URLSearchParams(window.location.search);
   const connected = params.get('connected');
   if (connected) {
@@ -269,7 +281,8 @@ function dashboardHTML() {
         </div>
       </main>
     </div>
-    ${state.showModal ? connectModalHTML() : ''}`;
+    ${state.showModal ? connectModalHTML() : ''}
+    ${state.showVDelivers ? vDeliverModalHTML() : ''}`;
 }
 
 function shopsListHTML() {
@@ -284,6 +297,7 @@ function shopsListHTML() {
         <div class="shop-item-name">${esc(s.shop_domain)}</div>
         <div class="shop-item-meta">
           ${s.last_synced_at ? 'Synced ' + fmtDateShort(s.last_synced_at) : 'Not yet synced'}
+          ${!s.has_vdelivers_key ? ' &nbsp;<span style="color:#f59e0b">⚠ vDelivers not set</span>' : ''}
         </div>
       </div>
     </div>`).join('');
@@ -318,6 +332,9 @@ function shopDetailHTML() {
           </div>
         </div>
         <div class="header-actions">
+          <button class="btn btn-secondary" data-action="vdelivers-modal">
+            ${s.has_vdelivers_key ? '🔗 vDelivers: Connected' : '⚠ Setup vDelivers'}
+          </button>
           <button class="btn btn-secondary" data-action="sync" ${state.syncBusy ? 'disabled' : ''}>
             ${state.syncBusy
               ? '<span class="spinner"></span>&nbsp;Syncing…'
@@ -493,6 +510,36 @@ function connectModalHTML() {
     </div>`;
 }
 
+function vDeliverModalHTML() {
+  const s = state.shop;
+  return `
+    <div class="modal-backdrop" data-action="close-vdelivers">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="modal-title">vDelivers Credentials — ${esc(s.shop_domain)}</div>
+        <p class="modal-hint">Orders from this store will be pushed to the configured vDelivers account.</p>
+        <form id="vdelivers-form">
+          <div class="form-group">
+            <label for="vd-url">vDelivers API URL</label>
+            <input id="vd-url" type="url" placeholder="https://api.vdelivers.com"
+                   value="${esc(s.vdelivers_api_url || '')}" required>
+          </div>
+          <div class="form-group">
+            <label for="vd-key">vDelivers API Key</label>
+            <input id="vd-key" type="text" placeholder="Enter API key"
+                   value="${s.has_vdelivers_key ? '••••••••' : ''}"
+                   ${s.has_vdelivers_key ? '' : 'required'}>
+            ${s.has_vdelivers_key ? '<small style="color:var(--c-muted)">Leave blank to keep existing key</small>' : ''}
+          </div>
+          <div id="vd-error" class="alert alert-error" hidden></div>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-secondary" data-action="close-vdelivers">Cancel</button>
+            <button type="submit" class="btn btn-primary">Save Credentials</button>
+          </div>
+        </form>
+      </div>
+    </div>`;
+}
+
 // ─── Event wiring ──────────────────────────────────────────────────────────────
 
 function attachEvents() {
@@ -520,6 +567,14 @@ async function handleClick(e) {
       state.showModal = false;
       render();
       break;
+    case 'vdelivers-modal':
+      state.showVDelivers = true;
+      render();
+      break;
+    case 'close-vdelivers':
+      state.showVDelivers = false;
+      render();
+      break;
     case 'page-prev':
       state.offsets[tab] = Math.max(0, (state.offsets[tab] || 0) - LIMIT);
       await loadTabData();
@@ -541,6 +596,21 @@ async function handleSubmit(e) {
     try {
       await doLogin(form.username.value.trim(), form.password.value);
       render();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.hidden = false;
+    }
+    return;
+  }
+
+  if (form.id === 'vdelivers-form') {
+    const errEl = $('vd-error');
+    errEl.hidden = true;
+    const url = $('vd-url').value.trim();
+    const rawKey = $('vd-key').value.trim();
+    const key = (rawKey && rawKey !== '••••••••') ? rawKey : (state.shop.has_vdelivers_key ? '' : null);
+    try {
+      await doSaveVDelivers(url, key || undefined);
     } catch (err) {
       errEl.textContent = err.message;
       errEl.hidden = false;

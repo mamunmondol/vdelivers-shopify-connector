@@ -94,6 +94,9 @@ const SQL = `
 
   CREATE INDEX IF NOT EXISTS sync_logs_shop_id_idx  ON sync_logs(shop_id);
   CREATE INDEX IF NOT EXISTS sync_logs_created_idx  ON sync_logs(created_at DESC);
+
+  ALTER TABLE shops ADD COLUMN IF NOT EXISTS vdelivers_api_url TEXT;
+  ALTER TABLE shops ADD COLUMN IF NOT EXISTS vdelivers_api_key  TEXT;
 `;
 
 async function runMigrations() {

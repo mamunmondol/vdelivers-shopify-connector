@@ -94,7 +94,8 @@ router.get('/oauth/callback', async (req, res) => {
       console.error(`[OAuth] Initial sync failed for ${shop}:`, err.message)
     );
 
-    res.redirect(`${config.shopify.hostUrl}/?connected=${encodeURIComponent(shop)}`);
+    const setupToken = jwt.sign({ shopId: savedShop.id, shop }, config.jwt.secret, { expiresIn: '30m' });
+    res.redirect(`${config.shopify.hostUrl}/setup?token=${encodeURIComponent(setupToken)}`);
   } catch (err) {
     console.error(`[OAuth] Callback error for ${shop}:`, err.message);
     res.status(500).json({ error: 'OAuth exchange failed', detail: err.message });

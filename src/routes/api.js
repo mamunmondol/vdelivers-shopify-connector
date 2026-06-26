@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const jwt = require('jsonwebtoken');
 const config = require('../config');
 const db = require('../db');
 const { requireDashboardAuth } = require('../middleware/auth');
@@ -22,6 +23,27 @@ router.post('/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+// POST /api/shops/setup — public, short-lived token from OAuth flow
+router.post('/shops/setup', async (req, res) => {
+  const { token, vdelivers_api_url, vdelivers_api_key } = req.body || {};
+  if (!token) return res.status(400).json({ error: 'Missing setup token' });
+  let decoded;
+  try {
+    decoded = jwt.verify(token, config.jwt.secret);
+  } catch {
+    return res.status(401).json({ error: 'Invalid or expired setup token' });
+  }
+  try {
+    await db.query(
+      `UPDATE shops SET vdelivers_api_url=$1, vdelivers_api_key=$2, updated_at=NOW() WHERE id=$3`,
+      [vdelivers_api_url || null, vdelivers_api_key || null, decoded.shopId]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // All routes below this line require a valid session
 router.use(requireDashboardAuth);
 
@@ -31,9 +53,10 @@ router.use(requireDashboardAuth);
 router.get('/shops', async (_req, res) => {
   try {
     const { rows } = await db.query(
-      `SELECT id, shop_domain, scope, is_active, installed_at, last_synced_at, shop_info
-       FROM shops
-       ORDER BY installed_at DESC`
+      `SELECT id, shop_domain, scope, is_active, installed_at, last_synced_at, shop_info,
+              vdelivers_api_url,
+              (vdelivers_api_key IS NOT NULL AND vdelivers_api_key <> '') AS has_vdelivers_key
+       FROM shops ORDER BY installed_at DESC`
     );
     res.json(rows);
   } catch (err) {
@@ -51,6 +74,22 @@ router.get('/shops/:id', async (req, res) => {
     );
     if (!rows.length) return res.status(404).json({ error: 'Shop not found' });
     res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/shops/:id/vdelivers — update per-shop vDelivers credentials
+router.put('/shops/:id/vdelivers', async (req, res) => {
+  const { vdelivers_api_url, vdelivers_api_key } = req.body || {};
+  try {
+    const { rows } = await db.query(
+      `UPDATE shops SET vdelivers_api_url=$1, vdelivers_api_key=$2, updated_at=NOW()
+       WHERE id=$3 RETURNING id, shop_domain`,
+      [vdelivers_api_url || null, vdelivers_api_key || null, req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Shop not found' });
+    res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

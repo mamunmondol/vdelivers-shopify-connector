@@ -217,10 +217,16 @@ async function processWebhookEvent(shop, topic, payload) {
 }
 
 /**
- * Optional: push synced data to vDelivers API.
+ * Push synced orders to the shop's configured vDelivers account.
+ * Falls back to global env vars if no per-shop credentials are set.
  */
 async function pushToVDelivers(shopId, shopDomain) {
-  if (!config.vdelivers.apiUrl || !config.vdelivers.apiKey) return;
+  const { rows: shopRows } = await db.query(
+    `SELECT vdelivers_api_url, vdelivers_api_key FROM shops WHERE id=$1`, [shopId]
+  );
+  const apiUrl = shopRows[0]?.vdelivers_api_url || config.vdelivers.apiUrl;
+  const apiKey = shopRows[0]?.vdelivers_api_key || config.vdelivers.apiKey;
+  if (!apiUrl || !apiKey) return;
 
   try {
     const { rows: orders } = await db.query(
@@ -229,16 +235,16 @@ async function pushToVDelivers(shopId, shopDomain) {
     );
     if (orders.length === 0) return;
 
-    await axios.post(`${config.vdelivers.apiUrl}/shopify/ingest`, {
+    await axios.post(`${apiUrl}/shopify/ingest`, {
       shop: shopDomain, orders,
     }, {
-      headers: { Authorization: `Bearer ${config.vdelivers.apiKey}` },
+      headers: { Authorization: `Bearer ${apiKey}` },
       timeout: 15000,
     });
 
     console.log(`[vDelivers] Pushed ${orders.length} orders from ${shopDomain}`);
   } catch (err) {
-    console.error(`[vDelivers] Push failed:`, err.message);
+    console.error(`[vDelivers] Push failed for ${shopDomain}:`, err.message);
   }
 }
 
