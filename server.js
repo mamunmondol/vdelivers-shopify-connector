@@ -12,6 +12,9 @@ const apiRouter = require('./src/routes/api');
 
 const app = express();
 
+// Trust Railway's reverse proxy so secure cookies work over HTTPS
+app.set('trust proxy', 1);
+
 // Serve the admin dashboard SPA
 app.use(express.static(path.join(__dirname, 'public')));
 
