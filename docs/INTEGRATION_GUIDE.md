@@ -33,7 +33,7 @@ https://noble-intuition-production.up.railway.app/shopify/oauth/install?shop=gad
 
 ## 2. Connecting vDelivers Backend to a Shop
 
-### Option A — During Install (Recommended)
+### Option A — During Install (Recommended for vDelivers-initiated flows)
 
 Pass the merchant's vDelivers credentials directly in the install URL. The connector saves them automatically after OAuth — no setup form needed.
 
@@ -42,7 +42,7 @@ https://noble-intuition-production.up.railway.app/shopify/oauth/install
   ?shop=MERCHANT-STORE.myshopify.com
   &vdelivers_api_url=http://35.255.120.233:3001
   &vdelivers_api_key=MERCHANT_API_KEY
-  &redirect_to=http://35.255.120.233:3001/settings/stores
+  &redirect_to=http://35.255.120.233:3001/settings/website
 ```
 
 **Parameters:**
@@ -54,9 +54,11 @@ https://noble-intuition-production.up.railway.app/shopify/oauth/install
 | `vdelivers_api_key` | No | Merchant's unique API key from vDelivers |
 | `redirect_to` | No | Where to send the merchant after install |
 
+After OAuth completes, the connector redirects back to `redirect_to`. The vDelivers backend can detect the completed install by reading the `?connected=SHOP` query parameter appended to the return URL.
+
 ---
 
-### Option B — After Install (From Dashboard)
+### Option B — After Install (From Connector Dashboard)
 
 1. Open the connector dashboard:
    ```
@@ -134,7 +136,49 @@ Authorization: Bearer {vdelivers_api_key}
 
 ---
 
-## 4. When Orders Are Synced
+## 4. vDelivers Backend — Shopify Settings Page Changes Required
+
+> **This section is for the vDelivers backend developer.**
+
+The **Settings → Website → Shopify** page currently generates its own Shopify OAuth URL with a stale ngrok redirect URI, which causes a `400 invalid_request` from Shopify. This needs to be fixed.
+
+### What to change
+
+The **Install** button on `/settings/website` should redirect to the connector's install URL instead of generating a Shopify OAuth URL directly.
+
+**Replace the current OAuth URL generation with a redirect to:**
+
+```
+https://noble-intuition-production.up.railway.app/shopify/oauth/install
+  ?shop={SHOP}.myshopify.com
+  &vdelivers_api_url=http://35.255.120.233:3001
+  &vdelivers_api_key={TENANT_API_KEY}
+  &redirect_to=http://35.255.120.233:3001/settings/website
+```
+
+Where:
+- `{SHOP}` = the value the merchant typed in the shop input field
+- `{TENANT_API_KEY}` = the merchant's unique vDelivers API key (generate one if it doesn't exist yet)
+
+### What currently breaks
+
+The current code sends:
+```
+redirect_uri=https://platonic-vanity-shower.ngrok-free.dev/shopify/oauth/callback
+```
+
+This is an old ngrok development URL that is **not registered** in the Shopify Partner Dashboard. Shopify rejects it immediately.
+
+### After install — showing the connection as active
+
+After OAuth, the connector redirects back to the `redirect_to` URL. To show the connection as active on the Settings page, the vDelivers backend should either:
+
+1. **Detect via `?connected=` param** — the connector appends `?connected=SHOP` to the redirect URL. Read this on page load and mark the shop as connected in the DB.
+2. **Detect via first ingest** — when `POST /shopify/ingest` is received for a shop for the first time, create the connection record automatically.
+
+---
+
+## 5. When Orders Are Synced
 
 | Trigger | When |
 |---|---|
@@ -146,7 +190,7 @@ The `shop` field in the request body identifies which merchant the orders belong
 
 ---
 
-## 5. Connector Dashboard
+## 6. Connector Dashboard
 
 Access the dashboard at:
 ```
@@ -163,7 +207,7 @@ From the dashboard you can:
 
 ---
 
-## 6. Environment Variables (Railway)
+## 7. Environment Variables (Railway)
 
 | Variable | Value |
 |---|---|
@@ -178,7 +222,7 @@ From the dashboard you can:
 
 ---
 
-## 7. Shopify Partner Dashboard Settings
+## 8. Shopify Partner Dashboard Settings
 
 | Setting | Value |
 |---|---|
@@ -188,7 +232,7 @@ From the dashboard you can:
 
 ---
 
-## 8. Health Check
+## 9. Health Check
 
 Verify the connector is running:
 ```
