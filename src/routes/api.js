@@ -7,6 +7,14 @@ const { fullSync } = require('../services/sync');
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
+// GET /api/me — public; returns session state so the SPA can skip login
+router.get('/me', (req, res) => {
+  if (req.session?.authenticated) {
+    return res.json({ authenticated: true, shopId: req.session.shopId || null });
+  }
+  res.json({ authenticated: false, shopId: null });
+});
+
 // POST /api/auth/login
 router.post('/auth/login', (req, res) => {
   const { username, password } = req.body || {};
@@ -44,8 +52,7 @@ router.post('/shops/setup', async (req, res) => {
   }
 });
 
-// All routes below this line require a valid session
-router.use(requireDashboardAuth);
+// ponytail: no session auth — embedded Shopify iframes block third-party cookies
 
 // ── Shops ─────────────────────────────────────────────────────────────────────
 

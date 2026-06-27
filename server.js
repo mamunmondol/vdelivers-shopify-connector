@@ -43,6 +43,15 @@ app.get('/health', (_req, res) => res.json({ status: 'ok', ts: new Date().toISOS
 
 app.get('/setup', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'setup.html')));
 
+// Shopify embedded-app load: Shopify opens the App URL with ?shop=…&hmac=…
+// Route to /shopify/auth for HMAC verification and session auto-creation.
+app.get('/', (req, res, next) => {
+  if (req.query.shop && req.query.hmac) {
+    return res.redirect(`/shopify/auth?${new URLSearchParams(req.query).toString()}`);
+  }
+  next();
+});
+
 // SPA fallback — serve index.html for any non-API GET (enables page refresh)
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/') || req.path.startsWith('/shopify/') || req.path.startsWith('/webhooks/')) {

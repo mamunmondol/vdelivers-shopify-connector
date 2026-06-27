@@ -636,7 +636,6 @@ async function handleSubmit(e) {
 
 (async () => {
   try {
-    // If session is still alive (e.g. page refresh), load shops straight away
     await loadShops();
     state.loggedIn = true;
     checkConnectedParam();

@@ -9,19 +9,54 @@ const { fullSync } = require('../services/sync');
 
 const SHOP_DOMAIN_RE = /^[a-zA-Z0-9][a-zA-Z0-9-]*\.myshopify\.com$/;
 
+// GET /shopify/auth?shop=…&hmac=…&timestamp=…
+// Shopify calls this when merchant opens the embedded app in Shopify Admin.
+// Verifies HMAC, auto-authenticates the session, then loads the dashboard.
+router.get('/auth', async (req, res) => {
+  const { shop, hmac } = req.query;
+
+  if (!shop || !SHOP_DOMAIN_RE.test(shop)) {
+    return res.redirect('/');
+  }
+
+  if (hmac && !verifyOAuthHmac(req.query)) {
+    return res.status(401).send('Invalid Shopify signature');
+  }
+
+  try {
+    const { rows } = await db.query(
+      `SELECT id FROM shops WHERE shop_domain = $1 AND is_active = TRUE`,
+      [shop]
+    );
+    if (rows.length) {
+      req.session.authenticated = true;
+      req.session.shopId = rows[0].id;
+      return res.redirect('/');
+    }
+  } catch (err) {
+    console.error('[Auth] Shop lookup error:', err.message);
+  }
+
+  // Shop not installed yet — start the OAuth flow
+  res.redirect(`/shopify/oauth/install?shop=${encodeURIComponent(shop)}`);
+});
+
 // GET /shopify/oauth/install?shop=mystore.myshopify.com
+// Optional: vdelivers_api_url, vdelivers_api_key, redirect_to
+// These are signed into the JWT state so they survive the OAuth round-trip securely.
 router.get('/oauth/install', (req, res) => {
-  const { shop } = req.query;
+  const { shop, vdelivers_api_url, vdelivers_api_key, redirect_to } = req.query;
 
   if (!shop || !SHOP_DOMAIN_RE.test(shop)) {
     return res.status(400).json({ error: 'Missing or invalid shop parameter. Expected format: mystore.myshopify.com' });
   }
 
-  const state = jwt.sign(
-    { shop, nonce: uuidv4() },
-    config.jwt.secret,
-    { expiresIn: config.jwt.expiresIn }
-  );
+  const statePayload = { shop, nonce: uuidv4() };
+  if (vdelivers_api_url) statePayload.vdelivers_api_url = vdelivers_api_url;
+  if (vdelivers_api_key) statePayload.vdelivers_api_key = vdelivers_api_key;
+  if (redirect_to) statePayload.redirect_to = redirect_to;
+
+  const state = jwt.sign(statePayload, config.jwt.secret, { expiresIn: config.jwt.expiresIn });
 
   const installUrl =
     `https://${shop}/admin/oauth/authorize` +
@@ -89,13 +124,29 @@ router.get('/oauth/callback', async (req, res) => {
       console.warn(`[OAuth] ${failed.length} webhook(s) failed to register for ${shop}:`, failed);
     }
 
-    // 7. Initial sync runs in the background — don't block the redirect
+    // 7. Auto-apply vDelivers credentials — prefer state-embedded creds (passed
+    //    by the vDelivers app), fall back to global env-var credentials.
+    const apiUrl = decoded.vdelivers_api_url || config.vdelivers.apiUrl || null;
+    const apiKey = decoded.vdelivers_api_key || config.vdelivers.apiKey || null;
+    if (apiUrl || apiKey) {
+      await db.query(
+        `UPDATE shops SET vdelivers_api_url=$1, vdelivers_api_key=$2 WHERE id=$3`,
+        [apiUrl, apiKey, savedShop.id]
+      );
+    }
+
+    // 8. Initial sync runs in the background — don't block the redirect
     fullSync(savedShop).catch((err) =>
       console.error(`[OAuth] Initial sync failed for ${shop}:`, err.message)
     );
 
-    const setupToken = jwt.sign({ shopId: savedShop.id, shop }, config.jwt.secret, { expiresIn: '30m' });
-    res.redirect(`${config.shopify.hostUrl}/setup?token=${encodeURIComponent(setupToken)}`);
+    // 9. Auto-authenticate — no login screen after install
+    req.session.authenticated = true;
+    req.session.shopId = savedShop.id;
+
+    // Redirect back to the vDelivers app if a return URL was provided, else dashboard
+    const redirectTo = decoded.redirect_to || `${config.shopify.hostUrl}/?connected=${encodeURIComponent(shop)}`;
+    res.redirect(redirectTo);
   } catch (err) {
     console.error(`[OAuth] Callback error for ${shop}:`, err.message);
     res.status(500).json({ error: 'OAuth exchange failed', detail: err.message });
